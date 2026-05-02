@@ -1,52 +1,46 @@
 import os
-import json
 from pathlib import Path
 
 import firebase_admin
+from dotenv import load_dotenv
 from firebase_admin import credentials, firestore
 
-
-def _get_credentials():
-    """
-    Load Firebase credentials from:
-    1. ENV JSON (Railway - recommended)
-    2. File path (local dev)
-    """
-
-    # 🔥 PRIORITY 1: JSON từ ENV
-    firebase_json = os.getenv("FIREBASE_CREDENTIALS_JSON")
-
-    if firebase_json:
-        try:
-            cred_dict = json.loads(firebase_json)
-            return credentials.Certificate(cred_dict)
-        except Exception as e:
-            raise ValueError(f"Invalid FIREBASE_CREDENTIALS_JSON: {e}")
-
-    # 🔥 PRIORITY 2: FILE PATH
-    firebase_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
-
-    if firebase_path:
-        path = Path(firebase_path)
-
-        if not path.is_absolute():
-            path = Path.cwd() / path
-
-        if not path.exists():
-            raise FileNotFoundError(f"Firebase credentials file not found: {path}")
-
-        return credentials.Certificate(str(path))
-
-    # ❌ Nếu không có gì
-    raise ValueError("Missing Firebase credentials (JSON or PATH)")
+load_dotenv()
 
 
-# 🚀 Init Firebase (chỉ chạy 1 lần)
+def _resolve_credentials_path(raw_path: str) -> Path:
+    expanded = Path(os.path.expanduser(os.path.expandvars(raw_path)))
+    if expanded.is_absolute():
+        return expanded
+
+    repo_root = Path(__file__).resolve().parents[5]
+    candidates = [
+        Path.cwd() / expanded,
+        repo_root / expanded,
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return candidates[0]
+
+# Avoid duplicate Firebase app initialization.
 if not firebase_admin._apps:
-    cred = _get_credentials()
+    firebase_credentials_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
+
+    if not firebase_credentials_path:
+        raise ValueError("Missing FIREBASE_CREDENTIALS_PATH environment variable")
+
+    resolved_credentials_path = _resolve_credentials_path(firebase_credentials_path)
+
+    if not resolved_credentials_path.exists():
+        print(f"Firebase credentials file not found at: {resolved_credentials_path}")
+        raise FileNotFoundError(
+            f"Firebase credentials file not found: {resolved_credentials_path}"
+        )
+
+    cred = credentials.Certificate(str(resolved_credentials_path))
     firebase_admin.initialize_app(cred)
-    print("🔥 Firebase initialized successfully")
 
-
-# 📦 Firestore client
 db = firestore.client()
